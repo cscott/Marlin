@@ -67,6 +67,7 @@
 #endif
 
 #define BOARD_NAME         "Printrboard Rev F"
+#define USBCON 1286  // Disable MarlinSerial etc.
 #define LARGE_FLASH        true
 
 //
@@ -132,7 +133,9 @@
 //
 // LCD / Controller
 //
-//#define USE_INTERNAL_SD
+#define USE_INTERNAL_SD
+#define SDSS 20
+#define SD_DETECT_PIN 15
 
 #if ENABLED(ULTRA_LCD)
   #define BEEPER_PIN       -1

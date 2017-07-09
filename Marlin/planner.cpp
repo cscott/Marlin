@@ -525,6 +525,76 @@ void Planner::check_axes_activity() {
 }
 
 #if PLANNER_LEVELING
+
+#if ABL_PLANAR
+/**
+ * lx, ly, lz - logical (cartesian, not delta) positions in mm
+ */
+void Planner::apply_leveling(float &lx, float &ly, float &lz)
+{
+	if ( abl_enabled )
+	{
+		float dx(RAW_X_POSITION(lx) - (X_TILT_FULCRUM));
+		float dy(RAW_Y_POSITION(ly) - (Y_TILT_FULCRUM));
+		float dz(RAW_Z_POSITION(lz));
+
+		if ( z_fade_height != 0.0 )
+		{
+			static float z_fade_factor = 1.0, last_raw_lz = -999.0;
+			const float raw_lz = RAW_Z_POSITION(lz);
+
+			if ( raw_lz >= z_fade_height )
+				return;
+
+			if ( last_raw_lz != raw_lz )
+			{
+				last_raw_lz = raw_lz;
+				z_fade_factor = 1.0 - raw_lz * inverse_z_fade_height;
+			}
+
+			lz = LOGICAL_Z_POSITION(bed_level_matrix.get_z_by_factor(vector_3(dx, dy, dz), z_fade_factor));
+		}
+		else
+		{
+			apply_rotation_xyz(bed_level_matrix, dx, dy, dz);
+
+			lx = LOGICAL_X_POSITION(dx + X_TILT_FULCRUM);
+			ly = LOGICAL_Y_POSITION(dy + Y_TILT_FULCRUM);
+			lz = LOGICAL_Z_POSITION(dz);
+		}
+	}
+}
+
+void Planner::unapply_leveling(float logical[XYZ])
+{
+	if ( abl_enabled )
+	{
+		float dx(RAW_X_POSITION(logical[X_AXIS]) - (X_TILT_FULCRUM));
+		float dy(RAW_Y_POSITION(logical[Y_AXIS]) - (Y_TILT_FULCRUM));
+		float dz(RAW_Z_POSITION(logical[Z_AXIS]));
+
+		if ( z_fade_height != 0.0  )
+		{
+			if ( RAW_Z_POSITION(logical[Z_AXIS] ) < z_fade_height )
+			{
+				matrix_3x3 inverse(matrix_3x3::transpose(bed_level_matrix));
+				dz = inverse.get_z_by_factor(vector_3(dx, dy, dz), (z_fade_height - dz) / z_fade_height);
+				logical[Z_AXIS] = LOGICAL_Z_POSITION(dz);
+			}
+		}
+		else
+		{
+			matrix_3x3 inverse(matrix_3x3::transpose(bed_level_matrix));
+			apply_rotation_xyz(inverse, dx, dy, dz);
+
+			logical[X_AXIS] = LOGICAL_X_POSITION(dx + X_TILT_FULCRUM);
+			logical[Y_AXIS] = LOGICAL_Y_POSITION(dy + Y_TILT_FULCRUM);
+			logical[Z_AXIS] = LOGICAL_Z_POSITION(dz);
+		}
+	}
+}
+
+#else // ABL_PLANAR
   /**
    * lx, ly, lz - logical (cartesian, not delta) positions in mm
    */
@@ -547,7 +617,7 @@ void Planner::check_axes_activity() {
 
     #if ENABLED(ENABLE_LEVELING_FADE_HEIGHT) && DISABLED(AUTO_BED_LEVELING_UBL)
       static float z_fade_factor = 1.0, last_raw_lz = -999.0;
-      if (z_fade_height) {
+      if (z_fade_height != 0.0) {
         const float raw_lz = RAW_Z_POSITION(lz);
         if (raw_lz >= z_fade_height) return;
         if (last_raw_lz != raw_lz) {
@@ -574,11 +644,20 @@ void Planner::check_axes_activity() {
             dy = RAW_Y_POSITION(ly) - (Y_TILT_FULCRUM),
             dz = RAW_Z_POSITION(lz);
 
-      apply_rotation_xyz(bed_level_matrix, dx, dy, dz);
+    #if ENABLED(ENABLE_LEVELING_FADE_HEIGHT)
+      if (z_fade_height != 0.0) {
+          dz = bed_level_matrix.get_z_by_factor(vector_3(dx, dy, dz), z_fade_factor);
+          lz = LOGICAL_Z_POSITION(dz);
+      }
+      else
+    #endif
+      {
+        apply_rotation_xyz(bed_level_matrix, dx, dy, dz);
 
-      lx = LOGICAL_X_POSITION(dx + X_TILT_FULCRUM);
-      ly = LOGICAL_Y_POSITION(dy + Y_TILT_FULCRUM);
-      lz = LOGICAL_Z_POSITION(dz);
+        lx = LOGICAL_X_POSITION(dx + X_TILT_FULCRUM);
+        ly = LOGICAL_Y_POSITION(dy + Y_TILT_FULCRUM);
+        lz = LOGICAL_Z_POSITION(dz);
+      }
 
     #elif ENABLED(AUTO_BED_LEVELING_BILINEAR)
 
@@ -634,7 +713,7 @@ void Planner::check_axes_activity() {
     #endif
 
     #if ENABLED(ENABLE_LEVELING_FADE_HEIGHT)
-      if (z_fade_height && RAW_Z_POSITION(logical[Z_AXIS]) >= z_fade_height) return;
+      if (z_fade_height != 0.0 && RAW_Z_POSITION(logical[Z_AXIS]) >= z_fade_height) return;
     #endif
 
     #if ENABLED(MESH_BED_LEVELING)
@@ -656,11 +735,20 @@ void Planner::check_axes_activity() {
             dy = RAW_Y_POSITION(logical[Y_AXIS]) - (Y_TILT_FULCRUM),
             dz = RAW_Z_POSITION(logical[Z_AXIS]);
 
-      apply_rotation_xyz(inverse, dx, dy, dz);
+    #if ENABLED(ENABLE_LEVELING_FADE_HEIGHT)
+      if ( z_fade_height != 0.0 ) {
+        dz = inverse.get_z_by_factor(vector_3(dx, dy, dz), (z_fade_height - dz) / z_fade_height);
+        logical[Z_AXIS] = LOGICAL_Z_POSITION(dz);
+      }
+      else
+    #endif
+      {
+        apply_rotation_xyz(inverse, dx, dy, dz);
 
-      logical[X_AXIS] = LOGICAL_X_POSITION(dx + X_TILT_FULCRUM);
-      logical[Y_AXIS] = LOGICAL_Y_POSITION(dy + Y_TILT_FULCRUM);
-      logical[Z_AXIS] = LOGICAL_Z_POSITION(dz);
+        logical[X_AXIS] = LOGICAL_X_POSITION(dx + X_TILT_FULCRUM);
+        logical[Y_AXIS] = LOGICAL_Y_POSITION(dy + Y_TILT_FULCRUM);
+        logical[Z_AXIS] = LOGICAL_Z_POSITION(dz);
+      }
 
     #elif ENABLED(AUTO_BED_LEVELING_BILINEAR)
 
@@ -674,6 +762,7 @@ void Planner::check_axes_activity() {
     #endif
   }
 
+#endif // ABL_PLANAR
 #endif // PLANNER_LEVELING
 
 /**

@@ -279,6 +279,10 @@
   #include "watchdog.h"
 #endif
 
+#if ENABLED(NEOPIXEL_RGBW_LED)
+#include <Adafruit_NeoPixel.h>
+#endif
+
 #if ENABLED(BLINKM)
   #include "blinkm.h"
   #include "Wire.h"
@@ -981,14 +985,66 @@ void servo_init() {
 
 #if HAS_COLOR_LEDS
 
+#if ENABLED(NEOPIXEL_RGBW_LED)
+
+  Adafruit_NeoPixel pixels(NEOPIXEL_PIXELS, NEOPIXEL_PIN, NEO_GRBW + NEO_KHZ800);
+
+  void neo_display(uint32_t color)
+  {
+    for ( uint16_t i = 0; i < pixels.numPixels(); ++i )
+      pixels.setPixelColor(i, color);
+
+    pixels.show();
+  }
+
+  void setup_neopixel() {
+    pixels.setBrightness(255); // 0 - 255 range
+    pixels.begin();
+    pixels.show(); // initialize to all off
+
+	delay(2000);
+	neo_display(pixels.Color(255, 0, 0, 0)); // red
+	delay(2000);
+	neo_display(pixels.Color(0, 255, 0, 0)); // green
+	delay(2000);
+	neo_display(pixels.Color(0, 0, 255, 0)); // blue
+	delay(2000);
+	neo_display(pixels.Color(0, 0, 0, 255)); // white
+	delay(2000);
+  }
+
+#endif
+
   void set_led_color(
     const uint8_t r, const uint8_t g, const uint8_t b
-      #if ENABLED(RGBW_LED)
+      #if ENABLED(RGBW_LED) || ENABLED(NEOPIXEL_RGBW_LED)
         , const uint8_t w=0
+      #endif
+      #if ENABLED(NEOPIXEL_RGBW_LED)
+        , bool isSequence = false
       #endif
   ) {
 
-    #if ENABLED(BLINKM)
+    #if ENABLED(NEOPIXEL_RGBW_LED)
+    const uint32_t color(pixels.Color(r, g, b, w));
+
+    if ( ! isSequence )
+    {
+        for ( int i = 0; i < pixels.numPixels(); ++i )
+            pixels.setPixelColor(i, color);
+    }
+    else
+    {
+        static int nextLed(0);
+
+        pixels.setPixelColor(nextLed, color);
+
+        if ( ++nextLed == pixels.numPixels() )
+            nextLed = 0;
+    }
+
+    pixels.show();
+    #elif ENABLED(BLINKM)
 
       // This variant uses i2c to send the RGB components to the device.
       SendColors(r, g, b);
@@ -2229,136 +2285,79 @@ static void clean_up_after_endstop_or_probe_move() {
     #endif
   }
 
-  // Do a single Z probe and return with current_position[Z_AXIS]
-  // at the height where the probe triggered.
-  static float run_z_probe() {
+static float get_current_z_mm(void)
+{
+	return (float)stepper.position(Z_AXIS) / (float)planner.axis_steps_per_mm[Z_AXIS];
+}
 
-    #if ENABLED(DEBUG_LEVELING_FEATURE)
-      if (DEBUGGING(LEVELING)) DEBUG_POS(">>> run_z_probe", current_position);
-    #endif
+static void run_z_probe(bool firstProbeAtPoint) {
+	planner.bed_level_matrix.set_to_identity();
+	float feedrate(HOMING_FEEDRATE_Z);
+	float zPosition(-10);
 
-    // Prevent stepper_inactive_time from running out and EXTRUDER_RUNOUT_PREVENT from extruding
-    refresh_cmd_timeout();
+	if ( firstProbeAtPoint )
+	{
+		// move down until you find the bed
+		planner.buffer_line(current_position[X_AXIS], current_position[Y_AXIS], zPosition, current_position[E_AXIS], feedrate/60, active_extruder);
+		stepper.synchronize();
 
-    #if ENABLED(PROBE_DOUBLE_TOUCH)
+		// we have to let the planner know where we are right now as it is not where we said to go.
+		zPosition = get_current_z_mm();
+		planner.set_position_mm(current_position[X_AXIS], current_position[Y_AXIS], zPosition, current_position[E_AXIS]);
 
-      // Do a first probe at the fast speed
-      do_probe_move(-(Z_MAX_LENGTH) - 10, Z_PROBE_SPEED_FAST);
+		// move up the retract distance
+		zPosition += Z_HOME_BUMP_MM;
+		planner.buffer_line(current_position[X_AXIS], current_position[Y_AXIS], zPosition, current_position[E_AXIS], feedrate/60, active_extruder);
+		stepper.synchronize();
+	}
+	else
+	{
+		zPosition = get_current_z_mm();
+	}
 
-      #if ENABLED(DEBUG_LEVELING_FEATURE)
-        float first_probe_z = current_position[Z_AXIS];
-        if (DEBUGGING(LEVELING)) SERIAL_ECHOLNPAIR("1st Probe Z:", first_probe_z);
-      #endif
+	// move back down slowly to find bed
+	feedrate = HOMING_FEEDRATE_Z/4;
+	zPosition -= Z_HOME_BUMP_MM * 2;
+	planner.buffer_line(current_position[X_AXIS], current_position[Y_AXIS], zPosition, current_position[E_AXIS], feedrate/60, active_extruder);
+	stepper.synchronize();
 
-      // move up by the bump distance
-      do_blocking_move_to_z(current_position[Z_AXIS] + home_bump_mm(Z_AXIS), MMM_TO_MMS(Z_PROBE_SPEED_FAST));
+	current_position[Z_AXIS] = get_current_z_mm();
+	// make sure the planner knows where we are as it may be a bit different than we last said to move to
+	planner.set_position_mm(current_position[X_AXIS], current_position[Y_AXIS], current_position[Z_AXIS], current_position[E_AXIS]);
+}
 
-    #else
+/// Probe bed height at position (x,y), returns the measured z value
+static float probe_pt_internal(float x, float y, float z_before, bool firstProbeAtPoint)
+{
+	// move to right place
+	do_blocking_move_to(current_position[X_AXIS], current_position[Y_AXIS], z_before);
 
-      // If the nozzle is above the travel height then
-      // move down quickly before doing the slow probe
-      float z = LOGICAL_Z_POSITION(Z_CLEARANCE_BETWEEN_PROBES);
-      if (zprobe_zoffset < 0) z -= zprobe_zoffset;
+	if ( firstProbeAtPoint )
+	{
+		do_blocking_move_to(x - X_PROBE_OFFSET_FROM_EXTRUDER
+							, y - Y_PROBE_OFFSET_FROM_EXTRUDER
+							, current_position[Z_AXIS]);
+	}
 
-      #if ENABLED(DELTA)
-        z -= home_offset[Z_AXIS]; // Account for delta height adjustment
-      #endif
+	run_z_probe(firstProbeAtPoint);
+	const float measured_z(current_position[Z_AXIS]);
 
-      if (z < current_position[Z_AXIS])
-        do_blocking_move_to_z(z, MMM_TO_MMS(Z_PROBE_SPEED_FAST));
+	SERIAL_PROTOCOLPGM(MSG_BED);
+	SERIAL_PROTOCOLPGM(" x: ");
+	SERIAL_PROTOCOL(x);
+	SERIAL_PROTOCOLPGM(" y: ");
+	SERIAL_PROTOCOL(y);
+	SERIAL_PROTOCOLPGM(" z: ");
+	SERIAL_PROTOCOL(measured_z);
+	SERIAL_PROTOCOLPGM("\n");
+	return measured_z;
+}
 
-    #endif
-
-    // move down slowly to find bed
-    do_probe_move(-(Z_MAX_LENGTH) - 10, Z_PROBE_SPEED_SLOW);
-
-    #if ENABLED(DEBUG_LEVELING_FEATURE)
-      if (DEBUGGING(LEVELING)) DEBUG_POS("<<< run_z_probe", current_position);
-    #endif
-
-    // Debug: compare probe heights
-    #if ENABLED(PROBE_DOUBLE_TOUCH) && ENABLED(DEBUG_LEVELING_FEATURE)
-      if (DEBUGGING(LEVELING)) {
-        SERIAL_ECHOPAIR("2nd Probe Z:", current_position[Z_AXIS]);
-        SERIAL_ECHOLNPAIR(" Discrepancy:", first_probe_z - current_position[Z_AXIS]);
-      }
-    #endif
-    return RAW_CURRENT_POSITION(Z) + zprobe_zoffset
-      #if ENABLED(DELTA)
-        + home_offset[Z_AXIS] // Account for delta height adjustment
-      #endif
-    ;
-  }
-
-  /**
-   * - Move to the given XY
-   * - Deploy the probe, if not already deployed
-   * - Probe the bed, get the Z position
-   * - Depending on the 'stow' flag
-   *   - Stow the probe, or
-   *   - Raise to the BETWEEN height
-   * - Return the probed Z position
-   */
-  float probe_pt(const float &lx, const float &ly, const bool stow, const uint8_t verbose_level, const bool printable=true) {
-    #if ENABLED(DEBUG_LEVELING_FEATURE)
-      if (DEBUGGING(LEVELING)) {
-        SERIAL_ECHOPAIR(">>> probe_pt(", lx);
-        SERIAL_ECHOPAIR(", ", ly);
-        SERIAL_ECHOPAIR(", ", stow ? "" : "no ");
-        SERIAL_ECHOLNPGM("stow)");
-        DEBUG_POS("", current_position);
-      }
-    #endif
-
-    const float nx = lx - (X_PROBE_OFFSET_FROM_EXTRUDER), ny = ly - (Y_PROBE_OFFSET_FROM_EXTRUDER);
-
-    if (printable)
-      if (!position_is_reachable_by_probe_xy(lx, ly)) return NAN;
-    else
-      if (!position_is_reachable_xy(nx, ny)) return NAN;
-
-    const float old_feedrate_mm_s = feedrate_mm_s;
-
-    #if ENABLED(DELTA)
-      if (current_position[Z_AXIS] > delta_clip_start_height)
-        do_blocking_move_to_z(delta_clip_start_height);
-    #endif
-
-    // Ensure a minimum height before moving the probe
-    do_probe_raise(Z_CLEARANCE_BETWEEN_PROBES);
-
-    feedrate_mm_s = XY_PROBE_FEEDRATE_MM_S;
-
-    // Move the probe to the given XY
-    do_blocking_move_to_xy(nx, ny);
-
-    if (DEPLOY_PROBE()) return NAN;
-
-    const float measured_z = run_z_probe();
-
-    if (!stow)
-      do_probe_raise(Z_CLEARANCE_BETWEEN_PROBES);
-    else
-      if (STOW_PROBE()) return NAN;
-
-    if (verbose_level > 2) {
-      SERIAL_PROTOCOLPGM("Bed X: ");
-      SERIAL_PROTOCOL_F(lx, 3);
-      SERIAL_PROTOCOLPGM(" Y: ");
-      SERIAL_PROTOCOL_F(ly, 3);
-      SERIAL_PROTOCOLPGM(" Z: ");
-      SERIAL_PROTOCOL_F(measured_z, 3);
-      SERIAL_EOL();
-    }
-
-    #if ENABLED(DEBUG_LEVELING_FEATURE)
-      if (DEBUGGING(LEVELING)) SERIAL_ECHOLNPGM("<<< probe_pt");
-    #endif
-
-    feedrate_mm_s = old_feedrate_mm_s;
-
-    return measured_z;
-  }
+static float probe_pt3(float x, float y, float z_before) {
+	return (probe_pt_internal(x, y, z_before, true)
+			+ probe_pt_internal(x, y, current_position[Z_AXIS] + 0.5, false)
+			+ probe_pt_internal(x, y, current_position[Z_AXIS] + 0.5, false)) / 3.0;
+}
 
 #endif // HAS_BED_PROBE
 
@@ -4779,7 +4778,16 @@ void home_all_axes() { gcode_G28(true); }
               if (!position_is_reachable_by_probe_xy(xProbe, yProbe)) continue;
             #endif
 
-            measured_z = faux ? 0.001 * random(-100, 101) : probe_pt(xProbe, yProbe, stow_probe_after_each, verbose_level);
+            if ( ! faux )
+            {
+                float z_before( ( ! abl_probe_index )
+                    ?  Z_HOMING_HEIGHT // raise before probing
+                    : (current_position[Z_AXIS] + Z_CLEARANCE_BETWEEN_PROBES) ); // raise extruder
+
+                measured_z = probe_pt3(xProbe, yProbe, z_before);
+            }
+            else
+                measured_z = 0.001 * random(-100, 101);
 
             if (isnan(measured_z)) {
               planner.abl_enabled = abl_should_enable;
@@ -4814,7 +4822,18 @@ void home_all_axes() { gcode_G28(true); }
           // Retain the last probe position
           xProbe = LOGICAL_X_POSITION(points[i].x);
           yProbe = LOGICAL_Y_POSITION(points[i].y);
-          measured_z = faux ? 0.001 * random(-100, 101) : probe_pt(xProbe, yProbe, stow_probe_after_each, verbose_level);
+
+          if ( ! faux )
+          {
+              float z_before( ( ! abl_probe_index )
+                  ?  Z_HOMING_HEIGHT // raise before probing
+                  : (current_position[Z_AXIS] + Z_CLEARANCE_BETWEEN_PROBES) ); // raise extruder
+
+              measured_z = points[i].z = probe_pt3(xProbe, yProbe, z_before);
+          }
+          else
+              measured_z = points[i].z = 0.001 * random(-100, 101);
+
           if (isnan(measured_z)) {
             planner.abl_enabled = abl_should_enable;
             return;
@@ -5014,7 +5033,8 @@ void home_all_axes() { gcode_G28(true); }
         if ( NEAR(current_position[X_AXIS], xProbe - (X_PROBE_OFFSET_FROM_EXTRUDER))
           && NEAR(current_position[Y_AXIS], yProbe - (Y_PROBE_OFFSET_FROM_EXTRUDER))
         ) {
-          const float simple_z = current_position[Z_AXIS] - measured_z;
+          // 2017.06.06 added zprobe_zoffset to calculation
+          const float simple_z = current_position[Z_AXIS] - measured_z - zprobe_zoffset;
           #if ENABLED(DEBUG_LEVELING_FEATURE)
             if (DEBUGGING(LEVELING)) {
               SERIAL_ECHOPAIR("Z from Probe:", simple_z);
@@ -5100,7 +5120,7 @@ void home_all_axes() { gcode_G28(true); }
 
     setup_for_endstop_or_probe_move();
 
-    const float measured_z = probe_pt(xpos, ypos, parser.boolval('S', true), 1);
+    const float measured_z = probe_pt3(xpos, ypos, Z_HOMING_HEIGHT);
 
     if (!isnan(measured_z)) {
       SERIAL_PROTOCOLPAIR("Bed X: ", FIXFLOAT(xpos));
@@ -5278,7 +5298,7 @@ void home_all_axes() { gcode_G28(true); }
       }
 
       #if DISABLED(PROBE_MANUALLY)
-        home_offset[Z_AXIS] -= probe_pt(dx, dy, stow_after_each, 1, false); // 1st probe to set height
+        home_offset[Z_AXIS] -= probe_pt_internal(dx, dy, true); // 1st probe to set height
       #endif
       
       do {
@@ -5295,7 +5315,7 @@ void home_all_axes() { gcode_G28(true); }
           #if ENABLED(PROBE_MANUALLY)
             z_at_pt[0] += lcd_probe_pt(0, 0);
           #else
-            z_at_pt[0] += probe_pt(dx, dy, stow_after_each, 1, false);
+            z_at_pt[0] += probe_pt_internal(dx, dy, false);
           #endif
         }
         if (_7p_calibration) { // probe extra center points
@@ -5304,7 +5324,7 @@ void home_all_axes() { gcode_G28(true); }
             #if ENABLED(PROBE_MANUALLY)
               z_at_pt[0] += lcd_probe_pt(cos(a) * r, sin(a) * r);
             #else
-              z_at_pt[0] += probe_pt(cos(a) * r + dx, sin(a) * r + dy, stow_after_each, 1, false);
+              z_at_pt[0] += probe_pt_internal(cos(a) * r + dx, sin(a) * r + dy, false);
             #endif
           }
           z_at_pt[0] /= float(_7p_double_circle ? 7 : probe_points);
@@ -5324,7 +5344,7 @@ void home_all_axes() { gcode_G28(true); }
               #if ENABLED(PROBE_MANUALLY)
                 z_at_pt[axis] += lcd_probe_pt(cos(a) * r, sin(a) * r);
               #else
-                z_at_pt[axis] += probe_pt(cos(a) * r + dx, sin(a) * r + dy, stow_after_each, 1, false);
+                z_at_pt[axis] += probe_pt_internal(cos(a) * r + dx, sin(a) * r + dy, false);
               #endif
             }
             zig_zag = !zig_zag;
@@ -6833,7 +6853,7 @@ inline void gcode_M42() {
     setup_for_endstop_or_probe_move();
 
     // Move to the first point, deploy, and probe
-    const float t = probe_pt(X_probe_location, Y_probe_location, stow_probe_after_each, verbose_level);
+    const float t = probe_pt3(X_probe_location, Y_probe_location, Z_HOMING_HEIGHT);
     if (isnan(t)) return;
 
     randomSeed(millis());
@@ -6909,7 +6929,7 @@ inline void gcode_M42() {
       } // n_legs
 
       // Probe a single point
-      sample_set[n] = probe_pt(X_probe_location, Y_probe_location, stow_probe_after_each, 0);
+      sample_set[n] = probe_pt3(X_probe_location, Y_probe_location, Z_HOMING_HEIGHT);
 
       /**
        * Get the current mean for the data points we have so far
@@ -7338,7 +7358,11 @@ inline void gcode_M109() {
       // Gradually change LED strip from violet to red as nozzle heats up
       if (!wants_to_cool) {
         const uint8_t blue = map(constrain(temp, start_temp, target_temp), start_temp, target_temp, 255, 0);
+#if ENABLED(NEOPIXEL_RGBW_LED)
+        if (blue != old_blue) set_led_color(255, 0, (old_blue = blue), true);
+#else
         if (blue != old_blue) set_led_color(255, 0, (old_blue = blue));
+#endif
       }
     #endif
 
@@ -7373,7 +7397,7 @@ inline void gcode_M109() {
   if (wait_for_heatup) {
     LCD_MESSAGEPGM(MSG_HEATING_COMPLETE);
     #if ENABLED(PRINTER_EVENT_LEDS)
-      #if ENABLED(RGBW_LED)
+      #if ENABLED(RGBW_LED) || ENABLED(NEOPIXEL_RGBW_LED)
         set_led_color(0, 0, 0, 255);  // Turn on the WHITE LED
       #else
         set_led_color(255, 255, 255); // Set LEDs All On
@@ -7467,7 +7491,11 @@ inline void gcode_M109() {
         // Gradually change LED strip from blue to violet as bed heats up
         if (!wants_to_cool) {
           const uint8_t red = map(constrain(temp, start_temp, target_temp), start_temp, target_temp, 0, 255);
+#if ENABLED(NEOPIXEL_RGBW_LED)
+          if (red != old_red) set_led_color((old_red = red), 0, 255, true);
+#else
           if (red != old_red) set_led_color((old_red = red), 0, 255);
+#endif
         }
       #endif
 
@@ -8123,7 +8151,7 @@ inline void gcode_M121() { endstops.enable_globally(false); }
       parser.seen('R') ? (parser.has_value() ? parser.value_byte() : 255) : 0,
       parser.seen('U') ? (parser.has_value() ? parser.value_byte() : 255) : 0,
       parser.seen('B') ? (parser.has_value() ? parser.value_byte() : 255) : 0
-      #if ENABLED(RGBW_LED)
+      #if ENABLED(RGBW_LED) || ENABLED(NEOPIXEL_RGBW_LED)
         , parser.seen('W') ? (parser.has_value() ? parser.value_byte() : 255) : 0
       #endif
     );
@@ -12925,6 +12953,10 @@ void setup() {
     setup_filrunoutpin();
   #endif
 
+  #if ENABLED(NEOPIXEL_RGBW_LED)
+    setup_neopixel();
+  #endif
+
   setup_killpin();
 
   setup_powerhold();
@@ -13046,7 +13078,9 @@ void setup() {
     OUT_WRITE(STAT_LED_BLUE_PIN, LOW); // turn it off
   #endif
 
-  #if ENABLED(RGB_LED) || ENABLED(RGBW_LED)
+  #if ENABLED(NEOPIXEL_RGBW_LED)
+    SET_OUTPUT(NEOPIXEL_PIN);
+  #elif ENABLED(RGB_LED) || ENABLED(RGBW_LED)
     SET_OUTPUT(RGB_LED_R_PIN);
     SET_OUTPUT(RGB_LED_G_PIN);
     SET_OUTPUT(RGB_LED_B_PIN);
