@@ -96,6 +96,15 @@
 #define E0_DIR_PIN         35   // A7
 #define E0_ENABLE_PIN      13   // C3
 
+#define E1_STEP_PIN        25 // PB5
+#define E1_DIR_PIN         37 // PE5
+#define E1_ENABLE_PIN      42 // PF4
+
+#define E2_STEP_PIN        2 // PD2
+#define E2_DIR_PIN         3 // PD3
+#define E2_ENABLE_PIN      43 // PF5 ... move to 26 / PB6
+
+
 // Enable control of stepper motor currents with the I2C based MCP4728 DAC used on Printrboard REVF
 #define DAC_STEPPER_CURRENT
 
@@ -118,6 +127,8 @@
 // Temperature Sensors
 //
 #define TEMP_0_PIN          1   // Analog Input (Extruder)
+#define TEMP_1_PIN          2
+#define TEMP_2_PIN          3
 #define TEMP_BED_PIN        0   // Analog Input (Bed)
 
 //
@@ -219,4 +230,4 @@
   #define SDSS               20   // B0 SS
 #endif
 
-#define FILWIDTH_PIN        2   // Analog Input
+#define FILWIDTH_PIN        5   // Analog Input

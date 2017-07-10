@@ -55,13 +55,22 @@
 # Or, try disconnecting USB to power down and then reconnecting before running avrdude.
 #
 
+# For LED support on Printrboard:
+NEOPIXEL=1
+
+# Note that Printrboard Rev F max code size is 122880, according to
+# pins_PRINTRBOARD_REVF.h
+
 # This defines the board to compile for (see boards.h for your board's ID)
-HARDWARE_MOTHERBOARD ?= 11
+HARDWARE_MOTHERBOARD ?= 811
 
 # Arduino source install directory, and version number
 # On most linuxes this will be /usr/share/arduino
-ARDUINO_INSTALL_DIR  ?= ${HOME}/Arduino
-ARDUINO_VERSION      ?= 106
+# Be sure to install Teendyduino extensions here, from
+# https://www.pjrc.com/teensy/td_download.html
+# and its included Adafruit_NeoPixel library.
+ARDUINO_INSTALL_DIR  ?= ${HOME}/3rdParty/arduino-1.8.3
+ARDUINO_VERSION      ?= 10803
 
 # You can optionally set a path to the avr-gcc tools. Requires a trailing slash. (ex: /usr/local/avr-gcc/bin)
 AVR_TOOLS_PATH ?=
@@ -316,7 +325,7 @@ VPATH += $(ARDUINO_INSTALL_DIR)/hardware/teensy/avr/libraries/Wire/utility
 VPATH += $(ARDUINO_INSTALL_DIR)/hardware/teensy/avr/libraries/SPI
 endif
 ifeq ($(NEOPIXEL), 1)
-VPATH += $(HOME)/Arduino/libraries/Adafruit_NeoPixel
+VPATH += $(ARDUINO_INSTALL_DIR)/hardware/teensy/avr/libraries/Adafruit_NeoPixel
 CXXSRC += Adafruit_NeoPixel.cpp
 endif
 ifeq ($(NEWLIQUID), 1)
