@@ -24,6 +24,8 @@
  *  Rev B  2 JUN 2017
  *
  *  Converted to Arduino pin numbering
+ *  at90usb1286 to arduino pin mapping is here:
+ *     https://labitat.dk/wiki/Panelolu_and_Printrboard_the_easy_way
  */
 
 /**
@@ -31,7 +33,8 @@
  *  and with the mainstream Marlin software.
  *
  *  Teensyduino - http://www.pjrc.com/teensy/teensyduino.html
- *    Installation instructions are at the above URL.
+ *    Download & installation instructions are at
+ *    https://www.pjrc.com/teensy/td_download.html
  *
  *    Select Teensy++ 2.0 in Arduino IDE from the 'Tools -> Boards' menu
  *
@@ -68,6 +71,28 @@
 
 #define BOARD_NAME         "Printrboard Rev F"
 #define LARGE_FLASH        true
+#ifndef USBCON
+  #error "USBCON should be defined by the platform for this board."
+#endif
+
+// Disable JTAG pins so EXP1 pins work correctly (this header is used for
+// the extrudrboard and filament sensor, for example).
+#define DISABLE_JTAG       true
+
+// Note that REV F6 of the Printrboard stole the A HOTEND pin and
+// reassigned it to a second fan for the extruder heater.  It's
+// recommended that you swap the A and B outputs on the Extrudrboard
+// so EXTRUDERS=2 will still work on F6, using B for E1/HEATER_1/TEMP_1.
+// See https://printrbot.zendesk.com/hc/en-us/articles/115003072346
+
+// If you have REV F6 you probably also want to set E0_AUTO_FAN_PIN
+// to PRINTRBOARD_F6_HEATER_FAN_PIN
+
+// Define NO_EXTRUDRBOARD if you don't have an EXTRUDRBOARD and wish to
+// reassign different functions to EXP1.
+
+// Define NO_EXTRUDRBOARD_OUTPUT_SWAP if you have a REV F5 or lower and
+// want to use EXTRUDRBOARD A for E1 and EXTRUDRBOARD B for E2.
 
 //
 // Limit Switches
@@ -95,6 +120,18 @@
 #define E0_DIR_PIN         35   // A7
 #define E0_ENABLE_PIN      13   // C3
 
+// Extrudrboard A output
+#define EA_STEP_PIN        25 // B5
+#define EA_DIR_PIN         37 // E5
+#define EA_ENABLE_PIN      42 // F4
+
+// Extrudrboard B output
+#define EB_STEP_PIN        2 // D2
+#define EB_DIR_PIN         3 // D3
+#define EB_ENABLE_PIN      43 // F5
+
+
+
 // Enable control of stepper motor currents with the I2C based MCP4728 DAC used on Printrboard REVF
 #define DAC_STEPPER_CURRENT
 
@@ -117,17 +154,54 @@
 // Temperature Sensors
 //
 #define TEMP_0_PIN          1   // Analog Input (Extruder)
+#define TEMP_A_PIN          2   // Analog Input (Extrudrboard A THERM)
+#define TEMP_B_PIN          3   // Analog Input (Extrudrboard B THERM)
 #define TEMP_BED_PIN        0   // Analog Input (Bed)
 
 //
 // Heaters / Fans
 //
 #define HEATER_0_PIN       15   // C5 PWM3B - Extruder
-#define HEATER_1_PIN       44   // F6
-#define HEATER_2_PIN       45   // F7
+// Note that Printrboard REV F6 removed HEATER_A_PIN from EXP1 and
+// reassigned it for a second fan output.
+#define HEATER_A_PIN       44   // F6 - Extrudrboard A HOTEND
+#define HEATER_B_PIN       45   // F7 - Extrudrboard B HOTEND
 #define HEATER_BED_PIN     14   // C4 PWM3C
 
 #define FAN_PIN            16   // C6 PWM3A
+#define PRINTRBOARD_F6_HEATER_FAN_PIN 44 // pin F6 on REV F6, see above.
+
+#ifndef NO_EXTRUDRBOARD
+#ifndef NO_EXTRUDRBOARD_OUTPUT_SWAP
+
+  #define E1_STEP_PIN        EA_STEP_PIN
+  #define E1_DIR_PIN         EA_DIR_PIN
+  #define E1_ENABLE_PIN      EA_ENABLE_PIN
+  #define TEMP_1_PIN         TEMP_A_PIN
+  #define HEATER_1_PIN       HEATER_A_PIN
+
+  #define E2_STEP_PIN        EB_STEP_PIN
+  #define E2_DIR_PIN         EB_DIR_PIN
+  #define E2_ENABLE_PIN      EB_ENABLE_PIN
+  #define TEMP_2_PIN         TEMP_B_PIN
+  #define HEATER_2_PIN       HEATER_B_PIN
+
+#else
+
+  #define E1_STEP_PIN        EB_STEP_PIN
+  #define E1_DIR_PIN         EB_DIR_PIN
+  #define E1_ENABLE_PIN      EB_ENABLE_PIN
+  #define TEMP_1_PIN         TEMP_B_PIN
+  #define HEATER_1_PIN       HEATER_B_PIN
+
+  #define E2_STEP_PIN        EA_STEP_PIN
+  #define E2_DIR_PIN         EA_DIR_PIN
+  #define E2_ENABLE_PIN      EA_ENABLE_PIN
+  #define TEMP_2_PIN         TEMP_A_PIN
+  #define HEATER_2_PIN       HEATER_A_PIN
+
+#endif // NO_EXTRUDRBOARD_OUTPUT_SWAP
+#endif // !NO_EXTRUDRBOARD
 
 //
 // LCD / Controller
@@ -216,4 +290,11 @@
   #define SDSS               20   // B0 SS
 #endif
 
-#define FILWIDTH_PIN        2   // Analog Input
+// This is EXP1-2, which is also the TEMP_A_PIN for the extrudrboard.
+// If using w/ extrudrboard, cut off pin 2 on the extrudrboard male
+// connector to ensure this is disconnected from the A THERM pullups.
+// You probably want to set EXTRUDERS=2 and swap the extrudrboard outputs,
+// which will let you use Channel B on the extrudrboard as E1.
+#ifndef FILWIDTH_PIN
+  #define FILWIDTH_PIN        2   // Analog Input
+#endif
