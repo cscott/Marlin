@@ -1,0 +1,9 @@
+#define ZROD_FOUR_START_8MM 1
+#define PULLEY_XY_20T 1
+#define EXTRUDER_OLD 1
+#define X_AXIS_UPGRADE 1
+#define ZROD_SUPER_Z 1
+
+#define PRINTRBOT_X_MAX 203
+#define PRINTRBOT_Y_MAX 203
+#define PRINTRBOT_Z_MAX 223

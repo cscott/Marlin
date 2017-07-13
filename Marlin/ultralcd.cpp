@@ -64,6 +64,16 @@ int16_t lcd_preheat_hotend_temp[2], lcd_preheat_bed_temp[2], lcd_preheat_fan_spe
   #endif
 #endif
 
+#if PIN_EXISTS(SD_DETECT)
+  uint8_t lcd_sd_status;
+#endif
+
+#if (ENABLED(LCD_I2C_TYPE_MCP23017) || ENABLED(LCD_I2C_TYPE_MCP23008)) && ENABLED(DETECT_DEVICE)
+  bool lcd_detected() { return lcd.LcdDetected() == 1; }
+#else
+  bool lcd_detected() { return true; }
+#endif
+
 uint8_t lcd_status_message_level;
 char lcd_status_message[3 * (LCD_WIDTH) + 1] = WELCOME_MSG; // worst case is kana with up to 3*LCD_WIDTH+1
 
@@ -429,10 +439,6 @@ uint16_t max_display_update_time = 0;
     int8_t manual_move_e_index = 0;
   #else
     #define manual_move_e_index 0
-  #endif
-
-  #if PIN_EXISTS(SD_DETECT)
-    uint8_t lcd_sd_status;
   #endif
 
   #if ENABLED(PIDTEMP)
@@ -4687,12 +4693,6 @@ void lcd_reset_alert_level() { lcd_status_message_level = 0; }
       lastEncoderBits = enc;
     }
   }
-
-  #if (ENABLED(LCD_I2C_TYPE_MCP23017) || ENABLED(LCD_I2C_TYPE_MCP23008)) && ENABLED(DETECT_DEVICE)
-    bool lcd_detected() { return lcd.LcdDetected() == 1; }
-  #else
-    bool lcd_detected() { return true; }
-  #endif
 
   #if ENABLED(AUTO_BED_LEVELING_UBL)
 

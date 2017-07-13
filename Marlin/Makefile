@@ -55,13 +55,22 @@
 # Or, try disconnecting USB to power down and then reconnecting before running avrdude.
 #
 
+# For LED support on Printrboard:
+NEOPIXEL=1
+
+# Note that Printrboard Rev F max code size is 122880, according to
+# pins_PRINTRBOARD_REVF.h
+
 # This defines the board to compile for (see boards.h for your board's ID)
-HARDWARE_MOTHERBOARD ?= 11
+HARDWARE_MOTHERBOARD ?= 811
 
 # Arduino source install directory, and version number
 # On most linuxes this will be /usr/share/arduino
-ARDUINO_INSTALL_DIR  ?= ${HOME}/Arduino
-ARDUINO_VERSION      ?= 106
+# Be sure to install Teendyduino extensions here, from
+# https://www.pjrc.com/teensy/td_download.html
+# and its included Adafruit_NeoPixel library.
+ARDUINO_INSTALL_DIR  ?= ${HOME}/3rdParty/arduino-1.8.3
+ARDUINO_VERSION      ?= 10803
 
 # You can optionally set a path to the avr-gcc tools. Requires a trailing slash. (ex: /usr/local/avr-gcc/bin)
 AVR_TOOLS_PATH ?=
@@ -228,6 +237,11 @@ else ifeq  ($(HARDWARE_MOTHERBOARD),301)
 HARDWARE_VARIANT ?= arduino
 MCU              ?= atmega2560
 
+#Mini Rambo
+else ifeq  ($(HARDWARE_MOTHERBOARD),302)
+HARDWARE_VARIANT ?= arduino
+MCU              ?= atmega2560
+
 # Azteeg
 else ifeq  ($(HARDWARE_MOTHERBOARD),67)
 HARDWARE_VARIANT ?= arduino
@@ -256,19 +270,28 @@ TARGET = $(notdir $(CURDIR))
 
 VPATH = .
 VPATH += $(BUILD_DIR)
+ifeq ($(HARDWARE_VARIANT), Teensy)
+VPATH += $(ARDUINO_INSTALL_DIR)/hardware/teensy/avr/cores/teensy
+endif
 VPATH += $(ARDUINO_INSTALL_DIR)/hardware/arduino/avr/cores/arduino
 
 VPATH += $(ARDUINO_INSTALL_DIR)/hardware/arduino/avr/libraries/SPI
 VPATH += $(ARDUINO_INSTALL_DIR)/hardware/arduino/avr/libraries/SPI/src
-VPATH += $(ARDUINO_INSTALL_DIR)/libraries/LiquidCrystal/src
+VPATH += $(HARDWARE_DIR)/arduino/hardware/teensy/avr/libraries/SPI
 ifeq ($(LIQUID_TWI2), 1)
+ifeq ($(HARDWARE_VARIANT), Teensy)
+VPATH += $(ARDUINO_INSTALL_DIR)/hardware/teensy/avr/libraries/Wire
+endif
 VPATH += $(ARDUINO_INSTALL_DIR)/libraries/Wire
 VPATH += $(ARDUINO_INSTALL_DIR)/libraries/Wire/utility
-VPATH += $(ARDUINO_INSTALL_DIR)/libraries/LiquidTWI2
+VPATH += $(ARDUINO_INSTALL_DIR)/hardware/arduino/avr/libraries/Wire/src
+VPATH += $(ARDUINO_INSTALL_DIR)/hardware/arduino/avr/libraries/Wire/src/utility
+VPATH += $(HOME)/Arduino/libraries/LiquidTWI2
 endif
 ifeq ($(WIRE), 1)
-VPATH += $(ARDUINO_INSTALL_DIR)/libraries/Wire
-VPATH += $(ARDUINO_INSTALL_DIR)/libraries/Wire/utility
+VPATH += $(ARDUINO_INSTALL_DIR)/hardware/arduino/avr/libraries/Wire/src
+VPATH += $(ARDUINO_INSTALL_DIR)/hardware/arduino/avr/libraries/Wire/src/utility
+VPATH += $(ARDUINO_INSTALL_DIR)/hardware/teensy/avr/libraries/Wire/src
 endif
 ifeq ($(NEOPIXEL), 1)
 VPATH += $(ARDUINO_INSTALL_DIR)/libraries/Adafruit_NeoPixel
@@ -277,6 +300,7 @@ endif
 ifeq ($(HARDWARE_VARIANT), arduino)
 HARDWARE_SUB_VARIANT ?= mega
 VPATH += $(ARDUINO_INSTALL_DIR)/hardware/arduino/avr/variants/$(HARDWARE_SUB_VARIANT)
+VPATH += $(HARDWARE_DIR)/arduino/hardware/arduino/avr/libraries/SPI
 else
 ifeq ($(HARDWARE_VARIANT), Sanguino)
 VPATH += $(HARDWARE_DIR)/marlin/avr/variants/sanguino
@@ -289,30 +313,62 @@ SRC = wiring.c \
 	wiring_analog.c wiring_digital.c \
 	wiring_pulse.c \
 	wiring_shift.c WInterrupts.c hooks.c
-ifeq ($(HARDWARE_VARIANT), Teensy)
-SRC = wiring.c
-VPATH += $(ARDUINO_INSTALL_DIR)/hardware/teensy/cores/teensy
-endif
 CXXSRC = WMath.cpp WString.cpp Print.cpp Marlin_main.cpp \
 	MarlinSerial.cpp Sd2Card.cpp SdBaseFile.cpp SdFatUtil.cpp \
 	SdFile.cpp SdVolume.cpp planner.cpp stepper.cpp \
 	temperature.cpp cardreader.cpp configuration_store.cpp \
 	watchdog.cpp SPI.cpp servo.cpp Tone.cpp ultralcd.cpp digipot_mcp4451.cpp \
 	dac_mcp4728.cpp vector_3.cpp least_squares_fit.cpp endstops.cpp stopwatch.cpp utility.cpp \
-	printcounter.cpp nozzle.cpp serial.cpp
+	printcounter.cpp nozzle.cpp serial.cpp gcode.cpp
+ifeq ($(HARDWARE_VARIANT), Teensy)
+SRC = wiring.c twi.c
+CXXSRC += stepper_dac.cpp Wire.cpp
+VPATH += $(ARDUINO_INSTALL_DIR)/hardware/teensy/avr/libraries/Wire
+VPATH += $(ARDUINO_INSTALL_DIR)/hardware/teensy/avr/libraries/Wire/utility
+VPATH += $(ARDUINO_INSTALL_DIR)/hardware/teensy/avr/libraries/SPI
+endif
 ifeq ($(NEOPIXEL), 1)
+VPATH += $(ARDUINO_INSTALL_DIR)/hardware/teensy/avr/libraries/Adafruit_NeoPixel
 CXXSRC += Adafruit_NeoPixel.cpp
 endif
+ifeq ($(NEWLIQUID), 1)
+VPATH += $(HOME)/Arduino/libraries/NewliquidCrystal
+CXXSRC += LiquidCrystal.cpp LiquidCrystal_SR.cpp LCD.cpp FastIO.cpp
+else
 ifeq ($(LIQUID_TWI2), 0)
+VPATH += $(ARDUINO_INSTALL_DIR)/libraries/LiquidCrystal/src
 CXXSRC += LiquidCrystal.cpp
+else
+ifeq ($(HARDWARE_VARIANT), Teensy)
+CXXSRC += LiquidTWI2.cpp
 else
 SRC += twi.c
 CXXSRC += Wire.cpp LiquidTWI2.cpp
 endif
+endif
+endif
 
 ifeq ($(WIRE), 1)
+ifneq ($(HARDWARE_VARIANT), Teensy)
 SRC += twi.c
+endif
 CXXSRC += Wire.cpp
+endif
+
+# U8glib support
+ifeq ($(U8GLIB), 1)
+VPATH += $(HOME)/Arduino/libraries/U8glib/src
+VPATH += $(HOME)/Arduino/libraries/U8glib/src/clib
+CXXSRC += U8glib.cpp
+SRC += u8g_dev_ssd1306_128x64.c u8g_com_arduino_ssd_i2c.c u8g_com_i2c.c
+SRC += u8g_bitmap.c u8g_delay.c u8g_rect.c u8g_font.c u8g_pb16v1.c u8g_pb16h1.c u8g_page.c
+SRC += u8g_pb.c u8g_com_api.c u8g_com_null.c u8g_ll_api.c u8g_clip.c u8g_state.c
+endif
+
+# TMC26X support
+ifeq ($(TMC26X), 1)
+VPATH += /home/kelly/Arduino/libraries/TMC26XStepper
+CXXSRC += TMC26XStepper.cpp stepper_indirection.cpp
 endif
 
 #Check for Arduino 1.0.0 or higher and use the correct source files for that version
@@ -369,7 +425,6 @@ CDEBUG = -g$(DEBUG)
 CWARN = -Wall -Wstrict-prototypes
 CTUNING = -funsigned-char -funsigned-bitfields -fpack-struct \
 	-fshort-enums -w -ffunction-sections -fdata-sections \
-	-flto \
 	-DARDUINO=$(ARDUINO_VERSION)
 ifneq ($(HARDWARE_MOTHERBOARD),)
 CTUNING += -DMOTHERBOARD=${HARDWARE_MOTHERBOARD}
